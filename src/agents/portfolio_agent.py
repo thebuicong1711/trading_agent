@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 from dotenv import load_dotenv
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from alpaca.trading import GetOrdersRequest, OrderStatus, QueryOrderStatus, GetPortfolioHistoryRequest
 from alpaca.trading.client import TradingClient
@@ -49,7 +49,7 @@ class PortfolioAgent:
         positions = self.trading_client.get_all_positions()
         self.portfolio = {
             p.symbol: {
-                'qty': int(p.qty),
+                'qty': p.qty,
                 'market_value': float(p.market_value),
                 'current_price': float(p.current_price),
                 'allocation': round(float(p.market_value) / self.equity, 4)
@@ -89,35 +89,53 @@ class PortfolioAgent:
             print(f"Error retrieving pending orders: {str(e)}")
             return {}
 
-    def process_signals(self, sentiment_signals: Dict[str, str], indicator_signals: Dict[str, str]) -> Dict[str, float]:
-        target_allocations = {}
-        universe = set(sentiment_signals.keys()) | set(indicator_signals.keys())
+    def process_decisions(self, decisions: List) -> Dict[str, float]:
+        """
+        Process decisions from the decision agent to determine target allocations.
+        Allocations are weighted based on strength (WEAK, NEUTRAL, STRONG).
 
-        scores = {}
-        for symbol in universe:
-            sentiment = sentiment_signals.get(symbol, "NEUTRAL")
-            indicator = indicator_signals.get(symbol, "HOLD")
-            sentiment_score = {"POSITIVE": 1, "NEUTRAL": 0, "NEGATIVE": -1}.get(sentiment, 0)
-            indicator_score = {"BUY": 1, "HOLD": 0, "SELL": -1}.get(indicator, 0)
-            combined_score = (sentiment_score + indicator_score) / 2
-            scores[symbol] = combined_score
+        Args:
+            decisions: List of Decision objects with attributes:
+                - symbol: Stock symbol (str)
+                - action: BUY or SELL (str)
+                - strength: WEAK, NEUTRAL, or STRONG (str)
+                - reason: Explanation for the decision (str)
 
-        long_candidates = {s: score for s, score in scores.items() if score > 0}
-        total_score = sum(long_candidates.values())
+        Returns:
+            Dictionary mapping symbols to target allocation percentages
+        """
+        buy_decisions = [decision for decision in decisions
+                         if hasattr(decision, 'action') and decision.action.upper() == "BUY"]
+
         available_allocation = 1.0 - self.cash_reserve
+        target_allocations = {}
 
-        # Calculate preliminary allocations
-        if total_score > 0:
-            for symbol, score in long_candidates.items():
-                allocation = (score / total_score) * available_allocation
-                target_allocations[symbol] = round(min(allocation, self.max_position_size), 2)
+        if buy_decisions:
+            strength_weights = {
+                "WEAK": 0.5,
+                "NEUTRAL": 1.0,
+                "STRONG": 1.5
+            }
 
-        # Normalize allocations if they exceed the available allocation
-        total_allocation = sum(target_allocations.values())
-        if total_allocation > available_allocation:
-            for symbol in target_allocations:
-                target_allocations[symbol] *= available_allocation / total_allocation
-                target_allocations[symbol] = round(target_allocations[symbol], 2)
+            total_weight = 0
+            symbol_weights = {}
+
+            for decision in buy_decisions:
+                symbol = decision.symbol
+                # Default to NEUTRAL if strength not specified or invalid
+                strength = getattr(decision, 'strength', "NEUTRAL").upper()
+                # Use defined weight or default to NEUTRAL weight if invalid strength value
+                weight = strength_weights.get(strength, strength_weights["NEUTRAL"])
+                symbol_weights[symbol] = weight
+                total_weight += weight
+
+            if total_weight > 0:
+                base_allocation = available_allocation / total_weight
+
+                for symbol, weight in symbol_weights.items():
+                    weighted_allocation = base_allocation * weight
+                    final_allocation = min(weighted_allocation, self.max_position_size)
+                    target_allocations[symbol] = round(final_allocation, 2)
 
         return target_allocations
 
@@ -404,30 +422,20 @@ class PortfolioAgent:
             return []
 
 
-if __name__ == '__main__':
-    load_dotenv()
-
-    API_KEY = os.getenv("ALPACA_API_KEY")
-    SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-
-    portfolio_agent = PortfolioAgent(API_KEY, SECRET_KEY)
-
-    sentiment_signals = {
-        "AAPL": "POSITIVE",
-        "MSFT": "NEUTRAL",
-        "AMZN": "POSITIVE",
-        "GOOGL": "NEGATIVE",
-        "META": "NEUTRAL"
-    }
-
-    indicator_signals = {
-        "AAPL": "BUY",
-        "MSFT": "BUY",
-        "AMZN": "HOLD",
-        "GOOGL": "SELL",
-        "META": "HOLD",
-        "NVDA": "BUY"  # Note: This is in indicator signals but not sentiment
-    }
-    target_allocations_ = portfolio_agent.process_signals(sentiment_signals, indicator_signals)
-    # portfolio_agent.execute_rebalance(target_allocations_)
-    print(portfolio_agent.get_portfolio_analytics())
+# if __name__ == '__main__':
+#     load_dotenv()
+#
+#     API_KEY = os.getenv("ALPACA_API_KEY")
+#     SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+#
+#     portfolio_agent = PortfolioAgent(API_KEY, SECRET_KEY)
+#
+#     test_decision = {
+#         "AAPL": {
+#             "action": "BUY",
+#             'strength': "WEAK",
+#             "reason": "Neutral sentiment and strong RSI buy signal."
+#         }
+#     }
+#     target_allocations_ = portfolio_agent.process_decisions(test_decision)
+#     print(target_allocations_)

@@ -6,7 +6,7 @@ from typing import List
 from utils.local_models import FinBert
 
 
-class SentimentAgent:
+class NewsSentimentAgent:
     def __init__(self, ticker: str, news_count: int = 10):
         self.ticker = yf.Ticker(ticker)
         self.news_count = news_count

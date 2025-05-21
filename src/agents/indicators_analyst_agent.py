@@ -655,7 +655,8 @@ class DailyTradingIndicators:
             if save_path:
                 plt.savefig(save_path, dpi=100, bbox_inches='tight')
             else:
-                plt.show()
+                # plt.show()
+                pass
 
             return fig
 
@@ -915,8 +916,8 @@ class DailyTradingIndicators:
         }
 
 
-if __name__ == "__main__":
-    trader = DailyTradingIndicators("AAPL", period="5d", interval="15m")
-    result = json.dumps(trader.run(), indent=2, default=str)
-    print(result)
+# if __name__ == "__main__":
+#     trader = DailyTradingIndicators("AAPL", period="30d", interval="1h")
+#     result = json.dumps(trader.run(), indent=2, default=str)
+#     print(result)
 
